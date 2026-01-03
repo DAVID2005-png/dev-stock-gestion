@@ -7,7 +7,7 @@ import { Link, useNavigate } from "react-router-dom";
 export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [selectedRole, setSelectedRole] = useState("secretaire");
+  const [shopName, setShopName] = useState(""); // Nouveau : Nom de la boutique
   const navigate = useNavigate();
 
   // --- LOGIQUE RESPONSIVE ---
@@ -27,19 +27,20 @@ export default function Register() {
         password
       );
 
-      let finalRole = selectedRole;
-      if (email.toLowerCase() === "admin@gmail.com") {
-        finalRole = "admin";
-      }
+      const user = userCredential.user;
 
-      await setDoc(doc(db, "users", userCredential.user.uid), {
+      // LOGIQUE MULTI-BOUTIQUE :
+      // Chaque personne qui s'inscrit ici est un ADMIN de sa propre boutique.
+      // Son 'adminId' est son propre UID.
+      await setDoc(doc(db, "users", user.uid), {
         email: email.toLowerCase(),
-        role: finalRole,
+        role: "admin", // Tous les nouveaux inscrits sont admins de leur shop
+        adminId: user.uid, // C'est l'identifiant unique de sa boutique
+        shopName: shopName || "Ma Boutique",
         createdAt: new Date(),
-        shopName: "DEV STOCK",
       });
 
-      alert(`Compte ${finalRole} créé avec succès !`);
+      alert(`Boutique "${shopName}" créée avec succès !`);
       navigate("/");
     } catch (err) {
       alert("Erreur : " + err.message);
@@ -53,13 +54,22 @@ export default function Register() {
         width: isMobile ? "90%" : "100%",
         padding: isMobile ? "30px 20px" : "40px"
       }}>
-        <h2 style={styles.title}>Créer un compte - DEV</h2>
+        <h2 style={styles.title}>Créer ma Boutique</h2>
         
         <form onSubmit={handleRegister} style={styles.form}>
-          <label style={styles.label}>Adresse Email</label>
+          <label style={styles.label}>Nom du Magasin / Boutique</label>
+          <input
+            type="text"
+            placeholder="ex: Pharmacie du Centre"
+            style={styles.input}
+            onChange={(e) => setShopName(e.target.value)}
+            required
+          />
+
+          <label style={styles.label}>Email (Identifiant)</label>
           <input
             type="email"
-            placeholder="ex: admin@gmail.com"
+            placeholder="votre@email.com"
             style={styles.input}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -68,31 +78,17 @@ export default function Register() {
           <label style={styles.label}>Mot de passe</label>
           <input
             type="password"
-            placeholder="Minimum 8 caractères"
+            placeholder="Minimum 6 caractères"
             style={styles.input}
             onChange={(e) => setPassword(e.target.value)}
             required
           />
 
-          {email.toLowerCase() !== "admin@gmail.com" && (
-            <>
-              <label style={styles.label}>Attribuer un rôle</label>
-              <select 
-                style={styles.input} 
-                value={selectedRole}
-                onChange={(e) => setSelectedRole(e.target.value)}
-              >
-                <option value="secretaire">Secrétaire (Ventes uniquement)</option>
-                <option value="ajoint">Adjoint (Gestion partielle)</option>
-              </select>
-            </>
-          )}
+          <p style={styles.adminNote}>
+            En vous inscrivant, vous devenez <b>Administrateur</b> de cet espace de gestion.
+          </p>
 
-          {email.toLowerCase() === "admin@gmail.com" && (
-            <p style={styles.adminNote}>⭐ Cet email sera configuré comme <b>ADMINISTRATEUR</b></p>
-          )}
-
-          <button type="submit" style={styles.button}>Enregistrer l'utilisateur</button>
+          <button type="submit" style={styles.button}>Créer mon espace de vente</button>
         </form>
 
         <p style={styles.footer}>
@@ -110,8 +106,8 @@ const styles = {
   form: { display: "flex", flexDirection: "column", gap: "15px" },
   label: { fontSize: "14px", fontWeight: "bold", color: "#34495e" },
   input: { padding: "12px", borderRadius: "5px", border: "1px solid #ddd", fontSize: "16px", outline: "none" },
-  button: { padding: "12px", background: "#3498db", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold", marginTop: "10px" },
-  adminNote: { backgroundColor: "#e8f4fd", padding: "10px", borderRadius: "5px", color: "#2980b9", fontSize: "13px", textAlign: "center" },
+  button: { padding: "12px", background: "#27ae60", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontWeight: "bold", marginTop: "10px" },
+  adminNote: { backgroundColor: "#f9f9f9", padding: "10px", borderRadius: "5px", color: "#7f8c8d", fontSize: "12px", textAlign: "center", border: "1px solid #eee" },
   footer: { textAlign: "center", marginTop: "20px", fontSize: "14px" },
   link: { color: "#3498db", textDecoration: "none", fontWeight: "bold" }
 };

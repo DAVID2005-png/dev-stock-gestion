@@ -7,11 +7,15 @@ import {
   serverTimestamp, 
   updateDoc, 
   doc, 
-  deleteDoc 
+  deleteDoc,
+  query,
+  where 
 } from "firebase/firestore";
 import { signOut } from "firebase/auth";
+import { useAuth } from "../context/AuthContext";
 
 export default function DashboardAdjoint() {
+  const { user } = useAuth();
   const [products, setProducts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [activeTab, setActiveTab] = useState("stock");
@@ -21,7 +25,6 @@ export default function DashboardAdjoint() {
   const [newProd, setNewProd] = useState({ nom: "", prix: "", action: "", imageUrl: "" });
   const [imagePreview, setImagePreview] = useState(null);
 
-  // AJOUT RESPONSIVE
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -30,14 +33,49 @@ export default function DashboardAdjoint() {
   }, []);
 
   useEffect(() => {
-    const unsubProd = onSnapshot(collection(db, "produits"), (snap) => {
+    if (!user?.adminId) return;
+
+    // --- CHARGEMENT DES PRODUITS DE LA BOUTIQUE ---
+    const qProd = query(collection(db, "produits"), where("adminId", "==", user.adminId));
+    const unsubProd = onSnapshot(qProd, (snap) => {
       setProducts(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
-    const unsubTrans = onSnapshot(collection(db, "transactions"), (snap) => {
+
+    // --- CHARGEMENT DES TRANSACTIONS DE LA BOUTIQUE ---
+    const qTrans = query(collection(db, "transactions"), where("adminId", "==", user.adminId));
+    const unsubTrans = onSnapshot(qTrans, (snap) => {
       setTransactions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
+
     return () => { unsubProd(); unsubTrans(); };
-  }, []);
+  }, [user]);
+
+  // --- SAUVEGARDE OU MODIFICATION PRODUIT ---
+  const handleSaveProduct = async (e) => {
+    e.preventDefault();
+    if (!user?.adminId) return alert("Session expirée");
+
+    try {
+      const productData = {
+        nom: newProd.nom,
+        prix: Number(newProd.prix),
+        action: Number(newProd.action),
+        imageUrl: newProd.imageUrl,
+        adminId: user.adminId, // Liaison boutique
+        updatedAt: serverTimestamp()
+      };
+
+      if (editingId) {
+        await updateDoc(doc(db, "produits", editingId), productData);
+      } else {
+        await addDoc(collection(db, "produits"), { 
+          ...productData, 
+          createdAt: serverTimestamp() 
+        });
+      }
+      closeModal();
+    } catch (err) { alert("Erreur: " + err.message); }
+  };
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -51,33 +89,9 @@ export default function DashboardAdjoint() {
     }
   };
 
-  const handleSaveProduct = async (e) => {
-    e.preventDefault();
-    try {
-      const productData = {
-        nom: newProd.nom,
-        prix: Number(newProd.prix),
-        action: Number(newProd.action),
-        imageUrl: newProd.imageUrl,
-        updatedAt: serverTimestamp()
-      };
-
-      if (editingId) {
-        await updateDoc(doc(db, "produits", editingId), productData);
-        alert("Produit mis à jour !");
-      } else {
-        await addDoc(collection(db, "produits"), { ...productData, createdAt: serverTimestamp() });
-        alert("Produit ajouté !");
-      }
-      closeModal();
-    } catch (err) { alert("Erreur: " + err.message); }
-  };
-
   const handleDeleteProduct = async (id) => {
-    if (window.confirm("Voulez-vous vraiment supprimer ce produit ?")) {
-      try {
-        await deleteDoc(doc(db, "produits", id));
-      } catch (err) { alert("Erreur lors de la suppression"); }
+    if (window.confirm("Supprimer définitivement ce produit ?")) {
+      try { await deleteDoc(doc(db, "produits", id)); } catch (err) { alert("Erreur"); }
     }
   };
 
@@ -95,40 +109,43 @@ export default function DashboardAdjoint() {
     setImagePreview(null);
   };
 
+  // --- RÈGLEMENT D'UNE DETTE ---
   const handlePayDebt = async (transactionId) => {
-    if (!window.confirm("Confirmer le règlement ?")) return;
+    if (!window.confirm("Le client a-t-il réglé la totalité de sa dette ?")) return;
     try {
       await updateDoc(doc(db, "transactions", transactionId), {
         debt: 0,
-        type: "Réglé",
-        paymentDate: serverTimestamp()
+        status: "Réglé",
+        paidDate: serverTimestamp()
       });
+      alert("Dette marquée comme payée !");
     } catch (err) { alert(err.message); }
   };
 
   return (
     <div style={styles.container}>
-      {/* NAVBAR RESPONSIVE */}
       <nav style={{...styles.navbar, padding: isMobile ? "10px 15px" : "15px 30px"}}>
         <div style={{...styles.logo, fontSize: isMobile ? "18px" : "22px"}}>
-          DEV STOCK <br/> {isMobile && <small style={{color: '#bdc3c7', fontSize: '10px'}}>(Mode Adjoint)</small>}
-          {!isMobile && <small style={{color: '#bdc3c7'}}>(Mode Adjoint)</small>}
+          {user?.shopName || "BOUTIQUE"} <br/>
+          <span style={{color: '#3498db', fontSize: '11px', fontWeight: 'normal'}}>GESTION ADJOINTE</span>
         </div>
-        <button onClick={() => signOut(auth)} style={styles.logoutBtn}>Déconnexion</button>
+        <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+            <span style={{fontSize: '11px', color: '#bdc3c7'}}>{user?.email}</span>
+            <button onClick={() => signOut(auth)} style={styles.logoutBtn}>Sortir</button>
+        </div>
       </nav>
 
       <div style={{...styles.content, padding: isMobile ? "15px" : "30px"}}>
-        {/* TABS RESPONSIVE */}
         <div style={{...styles.tabContainer, flexWrap: isMobile ? "wrap" : "nowrap"}}>
-          <button style={activeTab === "stock" ? styles.tabActive : styles.tab} onClick={() => setActiveTab("stock")}>📦 Inventaire</button>
-          <button style={activeTab === "ventes" ? styles.tabActive : styles.tab} onClick={() => setActiveTab("ventes")}>📋 Ventes & Dettes</button>
+          <button style={activeTab === "stock" ? styles.tabActive : styles.tab} onClick={() => setActiveTab("stock")}>📦 Stock & Inventaire</button>
+          <button style={activeTab === "ventes" ? styles.tabActive : styles.tab} onClick={() => setActiveTab("ventes")}>👥 Créances Clients</button>
         </div>
 
         {activeTab === "stock" && (
           <section style={styles.section}>
-            <div style={{...styles.sectionHeader, flexDirection: isMobile ? "column" : "row", gap: isMobile ? "10px" : "0"}}>
-              <h3 style={{margin: 0}}>État de l'Entrepôt</h3>
-              <button style={styles.addBtn} onClick={() => setIsModalOpen(true)}>+ Nouveau Produit</button>
+            <div style={{...styles.sectionHeader, flexDirection: isMobile ? "column" : "row"}}>
+              <h3 style={{margin: 0}}>Produits en Rayon</h3>
+              <button style={styles.addBtn} onClick={() => setIsModalOpen(true)}>+ Ajouter un produit</button>
             </div>
             
             <div style={{overflowX: "auto"}}>
@@ -136,8 +153,8 @@ export default function DashboardAdjoint() {
                 <thead>
                   <tr style={styles.thr}>
                     <th style={styles.th}>Aperçu</th>
-                    <th style={styles.th}>Produit</th>
-                    <th style={styles.th}>Prix</th>
+                    <th style={styles.th}>Désignation</th>
+                    <th style={styles.th}>Prix (FC)</th>
                     <th style={styles.th}>Stock</th>
                     <th style={styles.th}>Actions</th>
                   </tr>
@@ -148,71 +165,83 @@ export default function DashboardAdjoint() {
                       <td style={styles.td}>
                         {p.imageUrl ? <img src={p.imageUrl} alt="" style={styles.imgTable} /> : <div style={styles.noImg}>📦</div>}
                       </td>
-                      <td style={styles.td}>{p.nom}</td>
-                      <td style={styles.td}>{p.prix?.toLocaleString()} FC</td>
-                      <td style={{...styles.td, fontWeight: "bold", color: p.action <= 5 ? 'red' : 'inherit'}}>{p.action}</td>
+                      <td style={styles.td}><b>{p.nom}</b></td>
+                      <td style={styles.td}>{p.prix?.toLocaleString()}</td>
+                      <td style={{...styles.td, fontWeight: "bold", color: p.action <= 5 ? '#e74c3c' : '#2ecc71'}}>
+                        {p.action}
+                      </td>
                       <td style={styles.td}>
-                        <button onClick={() => openEditModal(p)} style={styles.editBtn}>✏️</button>
-                        <button onClick={() => handleDeleteProduct(p.id)} style={styles.deleteBtn}>🗑️</button>
+                        <button onClick={() => openEditModal(p)} style={styles.editBtn}>Modifier</button>
+                        <button onClick={() => handleDeleteProduct(p.id)} style={styles.deleteBtn}>Supprimer</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {products.length === 0 && <p style={styles.empty}>Aucun produit enregistré.</p>}
             </div>
           </section>
         )}
 
         {activeTab === "ventes" && (
           <section style={styles.section}>
-            <h3>Historique & Créances</h3>
+            <h3>Suivi des Paiements</h3>
             <div style={{overflowX: "auto"}}>
               <table style={{...styles.table, minWidth: isMobile ? "600px" : "100%"}}>
                 <thead>
                   <tr style={styles.thr}>
-                    <th style={styles.th}>Client</th>
-                    <th style={styles.th}>Produit</th>
-                    <th style={styles.th}>Reste (Dette)</th>
+                    <th style={styles.th}>Client / Contact</th>
+                    <th style={styles.th}>Achat</th>
+                    <th style={styles.th}>Reste à payer</th>
                     <th style={styles.th}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map(t => (
+                  {transactions.filter(t => t.debt > 0).map(t => (
                     <tr key={t.id} style={styles.tr}>
-                      <td style={styles.td}>{t.client} <br/> <small>{t.phone}</small></td>
+                      <td style={styles.td}>👤 {t.client} <br/> <small style={{color: '#7f8c8d'}}>{t.phone}</small></td>
                       <td style={styles.td}>{t.productName} (x{t.quantity})</td>
-                      <td style={{...styles.td, color: t.debt > 0 ? "#e74c3c" : "#27ae60", fontWeight: "bold"}}>
-                        {t.debt > 0 ? `${t.debt.toLocaleString()} F` : "Réglé ✅"}
+                      <td style={{...styles.td, color: "#e74c3c", fontWeight: "bold"}}>
+                        {t.debt.toLocaleString()} FC
                       </td>
                       <td style={styles.td}>
-                        {t.debt > 0 && <button onClick={() => handlePayDebt(t.id)} style={styles.payBtn}>💰 Encaisser</button>}
+                        <button onClick={() => handlePayDebt(t.id)} style={styles.payBtn}>💰 Marquer Réglé</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {transactions.filter(t => t.debt > 0).length === 0 && <p style={styles.empty}>Aucune dette en cours. ✅</p>}
             </div>
           </section>
         )}
 
-        {/* MODAL RESPONSIVE */}
         {isModalOpen && (
           <div style={styles.overlay}>
-            <div style={{...styles.modal, width: isMobile ? "90%" : "400px", padding: isMobile ? "20px" : "30px"}}>
-              <h3 style={{marginTop: 0}}>{editingId ? "Modifier" : "Ajouter"} le Produit</h3>
+            <div style={{...styles.modal, width: isMobile ? "90%" : "450px", padding: "25px"}}>
+              <h3 style={{marginTop: 0}}>{editingId ? "Modifier" : "Ajouter un"} Produit</h3>
               <form onSubmit={handleSaveProduct} style={styles.form}>
-                <label style={styles.label}>Nom</label>
-                <input type="text" value={newProd.nom} style={styles.input} required onChange={e => setNewProd({...newProd, nom: e.target.value})} />
-                <label style={styles.label}>Prix (FCFA)</label>
-                <input type="number" value={newProd.prix} style={styles.input} required onChange={e => setNewProd({...newProd, prix: e.target.value})} />
-                <label style={styles.label}>Quantité</label>
-                <input type="number" value={newProd.action} style={styles.input} required onChange={e => setNewProd({...newProd, action: e.target.value})} />
-                <label style={styles.label}>Photo</label>
-                <input type="file" accept="image/*" onChange={handleFileChange} />
+                <label style={styles.label}>Nom du produit</label>
+                <input type="text" placeholder="Ex: Sac de riz" value={newProd.nom} style={styles.input} required onChange={e => setNewProd({...newProd, nom: e.target.value})} />
+                
+                <div style={{display: 'flex', gap: '10px'}}>
+                   <div style={{flex: 1}}>
+                      <label style={styles.label}>Prix de vente</label>
+                      <input type="number" placeholder="FC" value={newProd.prix} style={styles.input} required onChange={e => setNewProd({...newProd, prix: e.target.value})} />
+                   </div>
+                   <div style={{flex: 1}}>
+                      <label style={styles.label}>Quantité en stock</label>
+                      <input type="number" placeholder="0" value={newProd.action} style={styles.input} required onChange={e => setNewProd({...newProd, action: e.target.value})} />
+                   </div>
+                </div>
+
+                <label style={styles.label}>Image du produit</label>
+                <input type="file" accept="image/*" onChange={handleFileChange} style={{fontSize: '12px'}} />
                 {imagePreview && <img src={imagePreview} style={styles.preview} alt="" />}
+                
                 <div style={styles.modalButtons}>
                   <button type="button" onClick={closeModal} style={styles.cancelBtn}>Annuler</button>
-                  <button type="submit" style={styles.saveBtn}>Enregistrer</button>
+                  <button type="submit" style={styles.saveBtn}>Confirmer</button>
                 </div>
               </form>
             </div>
@@ -224,34 +253,35 @@ export default function DashboardAdjoint() {
 }
 
 const styles = {
-  container: { backgroundColor: "#f4f7f6", minHeight: "100vh", fontFamily: "'Segoe UI', sans-serif" },
-  navbar: { display: "flex", justifyContent: "space-between", background: "#2c3e50", color: "white", alignItems: "center" },
-  logo: { fontWeight: "bold", color: "#3498db" },
-  logoutBtn: { background: "#e74c3c", color: "white", border: "none", padding: "8px 15px", borderRadius: "5px", cursor: "pointer" },
-  content: { },
+  container: { backgroundColor: "#f8f9fa", minHeight: "100vh", fontFamily: "'Inter', sans-serif" },
+  navbar: { display: "flex", justifyContent: "space-between", background: "#1a2a3a", color: "white", alignItems: "center" },
+  logo: { fontWeight: "bold", color: "white", lineHeight: '1.2' },
+  logoutBtn: { background: "#e74c3c", color: "white", border: "none", padding: "8px 15px", borderRadius: "5px", cursor: "pointer", fontSize: '12px' },
+  content: { maxWidth: '1200px', margin: '0 auto' },
   tabContainer: { display: "flex", gap: "10px", marginBottom: "25px" },
-  tab: { padding: "12px 25px", background: "#dcdde1", border: "none", borderRadius: "8px", cursor: "pointer" },
-  tabActive: { padding: "12px 25px", background: "#3498db", color: "white", borderRadius: "8px", fontWeight: "bold" },
-  section: { background: "white", padding: "25px", borderRadius: "12px", boxShadow: "0 4px 15px rgba(0,0,0,0.05)" },
-  sectionHeader: { display: "flex", justifyContent: "space-between", marginBottom: "20px", alignItems: "center" },
-  addBtn: { background: "#27ae60", color: "white", border: "none", padding: "12px 20px", borderRadius: "6px", cursor: "pointer" },
+  tab: { padding: "12px 20px", background: "#edf2f7", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: '14px', color: '#4a5568' },
+  tabActive: { padding: "12px 20px", background: "#3498db", color: "white", borderRadius: "8px", fontWeight: "bold", fontSize: '14px' },
+  section: { background: "white", padding: "20px", borderRadius: "12px", boxShadow: "0 2px 10px rgba(0,0,0,0.03)" },
+  sectionHeader: { display: "flex", justifyContent: "space-between", marginBottom: "20px", alignItems: "center", gap: '15px' },
+  addBtn: { background: "#2ecc71", color: "white", border: "none", padding: "10px 18px", borderRadius: "8px", cursor: "pointer", fontWeight: '600' },
   table: { width: "100%", borderCollapse: "collapse" },
-  thr: { background: "#f8f9fa" },
-  th: { textAlign: "left", padding: "15px", borderBottom: "2px solid #edf2f7", fontSize: "14px" },
-  tr: { borderBottom: "1px solid #eee" },
-  td: { padding: "15px", fontSize: "15px" },
+  thr: { background: "#f8fafc" },
+  th: { textAlign: "left", padding: "12px", borderBottom: "2px solid #edf2f7", fontSize: "13px", color: '#718096' },
+  tr: { borderBottom: "1px solid #f1f5f9" },
+  td: { padding: "12px", fontSize: "14px" },
   imgTable: { width: "45px", height: "45px", borderRadius: "8px", objectFit: "cover" },
-  noImg: { width: "45px", height: "45px", background: "#eee", borderRadius: "8px", display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  editBtn: { background: "#f39c12", color: "white", border: "none", padding: "6px 10px", borderRadius: "4px", marginRight: "5px", cursor: "pointer" },
-  deleteBtn: { background: "#e74c3c", color: "white", border: "none", padding: "6px 10px", borderRadius: "4px", cursor: "pointer" },
-  payBtn: { background: "#3498db", color: "white", border: "none", padding: "8px 12px", borderRadius: "5px", cursor: "pointer" },
-  overlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 },
-  modal: { background: "white", borderRadius: "15px", boxSizing: 'border-box' },
+  noImg: { width: "45px", height: "45px", background: "#f1f5f9", borderRadius: "8px", display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  editBtn: { background: "#ebf8ff", color: "#3182ce", border: "none", padding: "6px 12px", borderRadius: "6px", marginRight: "5px", cursor: "pointer", fontSize: '12px' },
+  deleteBtn: { background: "#fff5f5", color: "#e53e3e", border: "none", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: '12px' },
+  payBtn: { background: "#27ae60", color: "white", border: "none", padding: "8px 12px", borderRadius: "6px", cursor: "pointer", fontSize: '12px', fontWeight: 'bold' },
+  overlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.6)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 1000 },
+  modal: { background: "white", borderRadius: "15px", boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' },
   form: { display: "flex", flexDirection: "column", gap: "12px" },
-  label: { fontSize: "13px", fontWeight: "bold" },
-  input: { padding: "10px", borderRadius: "8px", border: "1px solid #ddd" },
-  preview: { width: "100%", height: "100px", objectFit: "contain", marginTop: "10px" },
-  modalButtons: { display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "10px" },
-  cancelBtn: { padding: "10px 15px", background: "#eee", border: "none", borderRadius: "8px", cursor: "pointer" },
-  saveBtn: { padding: "10px 15px", background: "#2ecc71", color: "white", border: "none", borderRadius: "8px", cursor: "pointer" }
+  label: { fontSize: '12px', fontWeight: 'bold', color: '#4a5568' },
+  input: { padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: '14px' },
+  preview: { width: "100%", height: "100px", objectFit: "contain", marginTop: "10px", borderRadius: '8px', border: '1px dashed #cbd5e0' },
+  modalButtons: { display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "15px" },
+  cancelBtn: { padding: "10px 20px", background: "#f1f5f9", border: "none", borderRadius: "8px", cursor: "pointer", color: '#4a5568' },
+  saveBtn: { padding: "10px 20px", background: "#3498db", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 'bold' },
+  empty: { textAlign: 'center', padding: '20px', color: '#a0aec0', fontSize: '14px' }
 };
